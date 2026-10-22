@@ -8,6 +8,7 @@ from app.agent.state import AgentState
 from app.agent.evaluator import evaluate_relevance
 from app.rag.retriever import retrieve_documents
 from app.rag.generator import generate_answer
+from app.agent.query_contextualizer import contextualize_question
 
 
 def retrieve_node(state: AgentState) -> dict:
@@ -41,30 +42,30 @@ def evaluate_node(state: AgentState) -> dict:
 
 
 def rewrite_query_node(state: AgentState) -> dict:
-    """Make a simple alternative query for the next retrieval attempt."""
+    """Make an alternative query for another retrieval attempt."""
 
-    original_query = state["search_query"]
-
-    # Add a little more retrieval context without changing the question.
     rewritten_query = (
-        f"{state['question']} relevant concepts definitions explanations"
+        f"{state['search_query']} "
+        "relevant concepts definitions explanations"
     )
 
-    # Avoid repeating the exact same query if it already contains this suffix.
-    if rewritten_query == original_query:
-        rewritten_query = f"{state['question']} related information"
+    if rewritten_query == state["search_query"]:
+        rewritten_query = (
+            f"{state['question']} related information"
+        )
 
-    print(f"[Agent] Trying an alternative search query")
+    print("[Agent] Trying an alternative search query")
 
     return {"search_query": rewritten_query}
 
 
 def generate_node(state: AgentState) -> dict:
-    """Generate the final answer from the retrieved evidence."""
+    """Generate an answer using retrieved evidence and conversation history."""
 
     answer = generate_answer(
         question=state["question"],
         retrieved_chunks=state["documents"],
+        conversation_history=state["conversation_history"],
     )
 
     print("[Agent] Answer generated")
@@ -116,15 +117,33 @@ def build_agent():
 agent = build_agent()
 
 
-def ask_agent(question: str) -> dict:
-    """Run the agent and return its answer and retrieval details."""
 
-    if not question.strip():
+def ask_agent(
+    question: str,
+    conversation_history: list[dict] | None = None,
+) -> dict:
+    """Run the agent using conversation-aware retrieval."""
+
+    question = question.strip()
+
+    if not question:
         raise ValueError("Question cannot be empty.")
 
+    history = conversation_history or []
+
+    # Convert a follow-up into a standalone retrieval query.
+    search_query = contextualize_question(
+        question=question,
+        conversation_history=history,
+    )
+
+    print(f"[Agent] Original question: {question}")
+    print(f"[Agent] Contextualized search query: {search_query}")
+
     initial_state: AgentState = {
-        "question": question.strip(),
-        "search_query": question.strip(),
+        "question": question,
+        "search_query": search_query,
+        "conversation_history": history,
         "documents": [],
         "attempts": 0,
         "relevant": False,

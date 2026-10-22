@@ -6,8 +6,12 @@ from urllib.request import Request, urlopen
 from app.config import LLM_MODEL, OLLAMA_BASE_URL
 
 
-def generate_answer(question: str, retrieved_chunks: list[dict]) -> str:
-    """Generate an answer using the retrieved document passages."""
+def generate_answer(
+    question: str,
+    retrieved_chunks: list[dict],
+    conversation_history: list[dict] | None = None,
+) -> str:
+    """Generate an evidence-grounded answer using recent conversation history."""
 
     if not question.strip():
         raise ValueError("Question cannot be empty.")
@@ -15,7 +19,7 @@ def generate_answer(question: str, retrieved_chunks: list[dict]) -> str:
     if not retrieved_chunks:
         return "I couldn't find relevant information in the available documents."
 
-    # Combine retrieved passages into a single context.
+    # Build the evidence context from retrieved document passages.
     context_parts = []
 
     for i, chunk in enumerate(retrieved_chunks, start=1):
@@ -25,33 +29,68 @@ def generate_answer(question: str, retrieved_chunks: list[dict]) -> str:
 
     context = "\n\n".join(context_parts)
 
-    # Tell the LLM how to answer.
-    prompt = f"""
-You are a helpful question-answering assistant.
+    # Give the model instructions that prioritize retrieved evidence.
+    system_prompt = """
+You are a helpful, evidence-grounded question-answering assistant.
 
-Answer the question using only the provided context.
-If the context does not contain enough information, say so.
-Do not invent facts.
-Mention the source filename when appropriate.
+Use the supplied document context as the primary source of factual
+information. Conversation history helps you understand references and
+follow-up questions, but it is not proof that a factual claim is true.
 
-Context:
-{context}
+If the documents do not contain enough information to answer a question
+about their contents, clearly say so. Do not invent facts.
 
-Question:
-{question}
-
-Answer:
+Use conversation history to understand references such as "it",
+"that method", or "the previous approach".
+Answer the user's latest question, not an earlier question.
+Mention source filenames when appropriate.
 """
 
-    # Prepare the request for Ollama's chat API.
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt.strip(),
+        }
+    ]
+
+    # Include only recent user/assistant messages to limit context size.
+    recent_history = (conversation_history or [])[-6:]
+
+    for message in recent_history:
+        role = message.get("role")
+        content = message.get("content", "")
+
+        if role in ("user", "assistant") and isinstance(content, str):
+            if content.strip():
+                messages.append(
+                    {
+                        "role": role,
+                        "content": content.strip(),
+                    }
+                )
+
+    # Add the current question and retrieved evidence last.
+    current_prompt = f"""
+Retrieved document context:
+
+{context}
+
+Latest question:
+{question}
+
+Answer the latest question using the instructions and document context.
+"""
+
+    messages.append(
+        {
+            "role": "user",
+            "content": current_prompt.strip(),
+        }
+    )
+
     payload = {
         "model": LLM_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        "messages": messages,
         "stream": False,
     }
 

@@ -133,14 +133,39 @@ def ask_question(request: QuestionRequest):
 
     try:
         # Save the user's question.
-        add_message(
-            conversation_id=conversation_id,
-            role="user",
-            content=question,
+        
+        # Save the current user message first.
+        add_message(conversation_id, "user", question)
+
+        # Load this conversation's saved history.
+        conversation = get_conversation(conversation_id)
+
+        if conversation is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversation not found.",
+            )
+
+        # Exclude the current question, which was just saved.
+        previous_messages = conversation["messages"][:-1]
+
+        # Pass only valid user/assistant messages to the agent.
+        conversation_history = [
+            {
+                "role": message["role"],
+                "content": message["content"],
+            }
+            for message in previous_messages
+            if message.get("role") in ("user", "assistant")
+            and message.get("content", "").strip()
+        ]
+
+        # Run the agent with the previous conversation context.
+        result = ask_agent(
+            question,
+            conversation_history=conversation_history,
         )
 
-        # Run the LangGraph Agentic RAG workflow.
-        result = ask_agent(question)
 
         # Collect unique source filenames.
         sources = sorted({
