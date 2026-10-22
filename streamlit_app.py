@@ -6,53 +6,67 @@ import streamlit as st
 API_URL = "http://127.0.0.1:8000"
 
 
+# --------------------------------
+# Page configuration
+# --------------------------------
+
 st.set_page_config(
     page_title="Agentic RAG",
     page_icon="🤖",
-    layout="centered",
+    layout="wide",
 )
 
-st.title("🤖 Agentic RAG")
-st.caption("Ask questions about your documents using AI.")
 
-# Store chat messages in this browser session.
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# --------------------------------
+# API helper functions
+# --------------------------------
 
-# Sidebar controls.
-with st.sidebar:
-    st.header("Knowledge Base")
-    st.write("Manage the documents used by your AI assistant.")
-
-    if st.button("📚 Ingest Documents", use_container_width=True):
-        try:
-            with st.spinner("Processing documents..."):
-                response = requests.post(
-                    f"{API_URL}/ingest",
-                    timeout=300,
-                )
-                response.raise_for_status()
-                result = response.json()
-
-            st.success(result["message"])
-            st.write(f"Chunks processed: {result['total_chunks']}")
-
-        except requests.RequestException as exc:
-            st.error(f"Could not ingest documents: {exc}")
-
-    st.divider()
-
-    if st.button("🗑️ Clear Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
-
-    st.caption("Backend: FastAPI")
-    st.caption("Agent: LangGraph")
-    st.caption("Vector database: ChromaDB")
+def create_chat() -> dict:
+    """Create a conversation through FastAPI."""
+    response = requests.post(
+        f"{API_URL}/conversations",
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
-# Display existing conversation messages.
-for message in st.session_state.messages:
+def fetch_chats() -> list[dict]:
+    """Fetch saved conversations from SQLite through FastAPI."""
+    response = requests.get(
+        f"{API_URL}/conversations",
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def fetch_chat(conversation_id: str) -> dict:
+    """Load one conversation and its messages."""
+    response = requests.get(
+        f"{API_URL}/conversations/{conversation_id}",
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def ask_question(question: str, conversation_id: str) -> dict:
+    """Send a question to the Agentic RAG backend."""
+    response = requests.post(
+        f"{API_URL}/ask",
+        json={
+            "question": question,
+            "conversation_id": conversation_id,
+        },
+        timeout=300,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def display_message(message: dict):
+    """Display a saved message, including answer sources."""
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
@@ -65,69 +79,194 @@ for message in st.session_state.messages:
                         st.write(f"- {source}")
 
             attempts = message.get("retrieval_attempts")
+
             if attempts is not None:
                 st.caption(f"Retrieval attempts: {attempts}")
 
 
-# Input box for a new question.
+# --------------------------------
+# Session state initialization
+# --------------------------------
+
+if "active_conversation_id" not in st.session_state:
+    st.session_state.active_conversation_id = None
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+
+# --------------------------------
+# Sidebar: new chat and history
+# --------------------------------
+
+st.sidebar.title("🤖 Agentic RAG")
+
+if st.sidebar.button("＋ New Chat", use_container_width=True):
+    try:
+        new_chat = create_chat()
+        st.session_state.active_conversation_id = new_chat["id"]
+        st.session_state.messages = []
+        st.rerun()
+    except requests.RequestException as exc:
+        st.sidebar.error(f"Could not create chat: {exc}")
+
+
+st.sidebar.divider()
+st.sidebar.subheader("Recent Chats")
+
+try:
+    conversations = fetch_chats()
+
+    for chat in conversations:
+        chat_id = chat["id"]
+        title = chat["title"]
+
+        # Visually distinguish the active conversation.
+        if chat_id == st.session_state.active_conversation_id:
+            button_label = f"🟢 {title}"
+        else:
+            button_label = f"💬 {title}"
+
+        if st.sidebar.button(
+            button_label,
+            key=f"conversation_{chat_id}",
+            use_container_width=True,
+        ):
+            try:
+                selected_chat = fetch_chat(chat_id)
+
+                st.session_state.active_conversation_id = chat_id
+                st.session_state.messages = selected_chat["messages"]
+
+                st.rerun()
+
+            except requests.RequestException as exc:
+                st.sidebar.error(f"Could not load chat: {exc}")
+
+except requests.RequestException:
+    st.sidebar.error(
+        "Cannot reach FastAPI. Start the backend and refresh this page."
+    )
+
+
+st.sidebar.divider()
+
+if st.sidebar.button("📚 Ingest Documents", use_container_width=True):
+    try:
+        with st.spinner("Ingesting documents..."):
+            response = requests.post(
+                f"{API_URL}/ingest",
+                timeout=300,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+        st.sidebar.success(result["message"])
+        st.sidebar.write(
+            f"Chunks processed: {result['total_chunks']}"
+        )
+
+    except requests.RequestException as exc:
+        st.sidebar.error(f"Ingestion failed: {exc}")
+
+
+st.sidebar.caption("Powered by LangGraph, FastAPI, ChromaDB and Ollama")
+
+
+# --------------------------------
+# Ensure an active conversation
+# --------------------------------
+
+if st.session_state.active_conversation_id is None:
+    try:
+        new_chat = create_chat()
+
+        st.session_state.active_conversation_id = new_chat["id"]
+        st.session_state.messages = []
+
+    except requests.RequestException:
+        st.error(
+            "The backend is unavailable. Start FastAPI in another "
+            "terminal, then refresh this page."
+        )
+        st.stop()
+
+
+# --------------------------------
+# Main chat interface
+# --------------------------------
+
+st.title("Agentic RAG")
+st.caption(
+    "Ask questions about your documents. "
+    "Your conversations are saved automatically."
+)
+
+for message in st.session_state.messages:
+    display_message(message)
+
+
+# --------------------------------
+# Handle a new question
+# --------------------------------
+
 question = st.chat_input("Ask a question about your documents...")
 
 if question:
-    # Display and save the user's question.
-    st.session_state.messages.append(
-        {"role": "user", "content": question}
-    )
+    conversation_id = st.session_state.active_conversation_id
+
+    # Show the user's question immediately.
+    user_message = {
+        "role": "user",
+        "content": question,
+    }
+
+    st.session_state.messages.append(user_message)
 
     with st.chat_message("user"):
         st.markdown(question)
 
-    # Ask the FastAPI backend.
+    # Ask the backend and display its response.
     with st.chat_message("assistant"):
-        with st.spinner("Searching documents and generating an answer..."):
-            try:
-                response = requests.post(
-                    f"{API_URL}/ask",
-                    json={"question": question},
-                    timeout=300,
-                )
-                response.raise_for_status()
-                result = response.json()
+        try:
+            with st.spinner("Searching documents and generating an answer..."):
+                result = ask_question(question, conversation_id)
 
-                answer = result["answer"]
-                sources = result.get("sources", [])
-                attempts = result.get("retrieval_attempts")
+            answer_message = {
+                "role": "assistant",
+                "content": result["answer"],
+                "sources": result.get("sources", []),
+                "retrieval_attempts": result.get("retrieval_attempts"),
+            }
 
-                st.markdown(answer)
+            st.markdown(answer_message["content"])
 
-                if sources:
-                    with st.expander("Sources"):
-                        for source in sources:
-                            st.write(f"- {source}")
+            if answer_message["sources"]:
+                with st.expander("Sources"):
+                    for source in answer_message["sources"]:
+                        st.write(f"- {source}")
 
-                if attempts is not None:
-                    st.caption(f"Retrieval attempts: {attempts}")
+            attempts = answer_message["retrieval_attempts"]
 
-                # Save the complete assistant response.
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources,
-                        "retrieval_attempts": attempts,
-                    }
-                )
+            if attempts is not None:
+                st.caption(f"Retrieval attempts: {attempts}")
 
-            except requests.RequestException as exc:
-                error_message = (
-                    "I couldn't connect to the backend or get an answer. "
-                    "Check that FastAPI and Ollama are running."
-                )
-                st.error(error_message)
-                st.caption(str(exc))
+            st.session_state.messages.append(answer_message)
 
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": error_message,
-                    }
-                )
+        except requests.RequestException as exc:
+            error_message = (
+                "I couldn't get a response from the backend. "
+                "Check that FastAPI and Ollama are running."
+            )
+
+            st.error(error_message)
+            st.caption(str(exc))
+
+            # The backend may already have saved the user message.
+            # Do not save a fabricated assistant answer to SQLite.
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": error_message,
+                }
+            )
