@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
 from app.agent.graph import ask_agent
@@ -240,7 +240,10 @@ def ingest():
         ) from exc
 
 @app.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    replace_existing: bool = Form(False),
+):
     """Save and index one uploaded PDF or TXT document."""
 
     allowed_extensions = {".pdf", ".txt"}
@@ -252,7 +255,6 @@ async def upload_document(file: UploadFile = File(...)):
             detail="Please select a file to upload.",
         )
 
-    # Keep only the filename, not any supplied directory path.
     safe_name = Path(file.filename).name
     extension = Path(safe_name).suffix.lower()
 
@@ -264,13 +266,14 @@ async def upload_document(file: UploadFile = File(...)):
 
     DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     destination = DOCUMENTS_DIR / safe_name
+    already_exists = destination.exists()
 
-    if destination.exists():
+    if already_exists and not replace_existing:
         raise HTTPException(
             status_code=409,
             detail=(
                 f"'{safe_name}' already exists. "
-                "Rename the file and try again."
+                "Enable replacement to update it."
             ),
         )
 
@@ -289,26 +292,43 @@ async def upload_document(file: UploadFile = File(...)):
             detail="The maximum upload size is 10 MB.",
         )
 
+    # Keep the existing file contents in case replacement fails.
+    old_content = destination.read_bytes() if already_exists else None
+
     try:
         destination.write_bytes(content)
-
         total_chunks = ingest_single_document(destination)
 
+        action = "replaced and re-indexed" if already_exists else "uploaded and indexed"
+
         return {
-            "message": f"'{safe_name}' uploaded and indexed successfully.",
+            "message": f"'{safe_name}' {action} successfully.",
             "filename": safe_name,
             "total_chunks": total_chunks,
         }
 
     except Exception as exc:
-        # Remove the saved file if ingestion fails.
-        destination.unlink(missing_ok=True)
+        if already_exists and old_content is not None:
+            # Restore the original file and attempt to restore its index.
+            try:
+                destination.write_bytes(old_content)
+                ingest_single_document(destination)
+            except Exception as recovery_error:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"Replacement failed: {exc}. "
+                        "The original file was restored, but index recovery "
+                        f"also failed: {recovery_error}"
+                    ),
+                ) from exc
+        else:
+            destination.unlink(missing_ok=True)
 
         raise HTTPException(
             status_code=500,
             detail=f"Could not process '{safe_name}': {exc}",
         ) from exc
-
 
 @app.get("/documents")
 def get_documents():

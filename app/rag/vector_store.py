@@ -1,7 +1,7 @@
 
 import chromadb
 
-from app.config import CHROMA_DIR
+from app.config import CHROMA_DIR, SIMILARITY_THRESHOLD
 
 # Create a persistent ChromaDB client.
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,11 @@ def search_chunks(
             }
         )
 
-    return matches
+    return [
+        match
+        for match in matches
+        if match["distance"] <= SIMILARITY_THRESHOLD
+    ]
 
 
 def list_indexed_documents() -> list[dict]:

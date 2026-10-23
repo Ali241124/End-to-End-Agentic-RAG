@@ -72,6 +72,19 @@ def generate_node(state: AgentState) -> dict:
 
     return {"answer": answer}
 
+def no_evidence_node(state: AgentState) -> dict:
+    """Respond safely when retrieval finds no relevant evidence."""
+
+    answer = (
+        "I couldn't find sufficiently relevant information in the "
+        "uploaded documents to answer this question confidently. "
+        "Try rephrasing your question or uploading a document that "
+        "covers this topic."
+    )
+
+    print("[Agent] No relevant evidence found. Skipping generation.")
+
+    return {"answer": answer}
 
 def decide_next_step(
     state: AgentState,
@@ -94,6 +107,7 @@ def build_agent():
     workflow.add_node("evaluate", evaluate_node)
     workflow.add_node("rewrite", rewrite_query_node)
     workflow.add_node("generate", generate_node)
+    workflow.add_node("no_evidence", no_evidence_node)
 
     workflow.add_edge(START, "retrieve")
     workflow.add_edge("retrieve", "evaluate")
@@ -104,12 +118,13 @@ def build_agent():
         {
             "generate": "generate",
             "rewrite": "rewrite",
-            "finish": "generate",
+            "finish": "no_evidence",
         },
     )
 
     workflow.add_edge("rewrite", "retrieve")
     workflow.add_edge("generate", END)
+    workflow.add_edge("no_evidence", END)
 
     return workflow.compile()
 

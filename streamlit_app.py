@@ -64,9 +64,7 @@ def ask_question(question: str, conversation_id: str) -> dict:
     response.raise_for_status()
     return response.json()
 
-def upload_document(uploaded_file) -> dict:
-    """Upload one PDF or TXT file to FastAPI for indexing."""
-
+def upload_document(uploaded_file, replace_existing: bool = False) -> dict:
     response = requests.post(
         f"{API_URL}/upload",
         files={
@@ -76,6 +74,7 @@ def upload_document(uploaded_file) -> dict:
                 uploaded_file.type or "application/octet-stream",
             )
         },
+        data={"replace_existing": str(replace_existing).lower()},
         timeout=300,
     )
     response.raise_for_status()
@@ -201,14 +200,18 @@ with st.sidebar.form("document_upload_form", clear_on_submit=True):
         "Upload and Index",
         use_container_width=True,
     )
-
+    replace_existing = st.checkbox(
+    "Replace document if the filename already exists",
+    value=False,
+    help="Replaces the existing file and updates its indexed chunks.",
+    )
 if upload_submitted:
     if uploaded_file is None:
         st.sidebar.warning("Please select a PDF or TXT file first.")
     else:
         try:
             with st.spinner("Uploading and indexing document..."):
-                result = upload_document(uploaded_file)
+                result = upload_document(uploaded_file, replace_existing)
 
             st.sidebar.success(result["message"])
             st.sidebar.write(
