@@ -1,9 +1,12 @@
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from app.agent.graph import ask_agent
 from app.rag.retriever import ingest_documents
+from pathlib import Path
+from app.config import DOCUMENTS_DIR
+from app.rag.retriever import ingest_single_document
 from app.database.chat_history import (
     create_conversation,
     list_conversations,
@@ -230,4 +233,74 @@ def ingest():
         raise HTTPException(
             status_code=500,
             detail=f"Document ingestion failed: {exc}",
+        ) from exc
+
+@app.post("/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Save and index one uploaded PDF or TXT document."""
+
+    allowed_extensions = {".pdf", ".txt"}
+    max_file_size = 10 * 1024 * 1024  # 10 MB
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Please select a file to upload.",
+        )
+
+    # Keep only the filename, not any supplied directory path.
+    safe_name = Path(file.filename).name
+    extension = Path(safe_name).suffix.lower()
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF and TXT files are supported.",
+        )
+
+    DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    destination = DOCUMENTS_DIR / safe_name
+
+    if destination.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{safe_name}' already exists. "
+                "Rename the file and try again."
+            ),
+        )
+
+    content = await file.read(max_file_size + 1)
+    await file.close()
+
+    if not content:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty.",
+        )
+
+    if len(content) > max_file_size:
+        raise HTTPException(
+            status_code=413,
+            detail="The maximum upload size is 10 MB.",
+        )
+
+    try:
+        destination.write_bytes(content)
+
+        total_chunks = ingest_single_document(destination)
+
+        return {
+            "message": f"'{safe_name}' uploaded and indexed successfully.",
+            "filename": safe_name,
+            "total_chunks": total_chunks,
+        }
+
+    except Exception as exc:
+        # Remove the saved file if ingestion fails.
+        destination.unlink(missing_ok=True)
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not process '{safe_name}': {exc}",
         ) from exc

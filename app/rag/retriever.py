@@ -1,6 +1,8 @@
 
+from pathlib import Path
+
 from app.config import TOP_K
-from app.rag.loader import load_documents
+from app.rag.loader import load_documents, load_document
 from app.rag.chunker import split_text
 from app.rag.embeddings import create_embeddings
 from app.rag.vector_store import store_chunks, search_chunks
@@ -35,6 +37,37 @@ def ingest_documents() -> int:
 
     return total_chunks
 
+def ingest_single_document(file_path: Path) -> int:
+    """Ingest one uploaded document into the vector store."""
+
+    text = load_document(file_path)
+
+    if not text.strip():
+        raise ValueError(
+            f"No extractable text found in '{file_path.name}'."
+        )
+
+    chunks = split_text(text)
+
+    if not chunks:
+        raise ValueError(
+            f"No text chunks could be created for '{file_path.name}'."
+        )
+
+    embeddings = create_embeddings(chunks)
+
+    store_chunks(
+        chunks=chunks,
+        embeddings=embeddings,
+        source=file_path.name,
+    )
+
+    print(
+        f"Ingested {file_path.name}: "
+        f"{len(chunks)} chunks"
+    )
+
+    return len(chunks)
 
 def retrieve_documents(
     question: str,

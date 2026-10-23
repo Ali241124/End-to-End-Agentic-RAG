@@ -64,6 +64,22 @@ def ask_question(question: str, conversation_id: str) -> dict:
     response.raise_for_status()
     return response.json()
 
+def upload_document(uploaded_file) -> dict:
+    """Upload one PDF or TXT file to FastAPI for indexing."""
+
+    response = requests.post(
+        f"{API_URL}/upload",
+        files={
+            "file": (
+                uploaded_file.name,
+                uploaded_file.getvalue(),
+                uploaded_file.type or "application/octet-stream",
+            )
+        },
+        timeout=300,
+    )
+    response.raise_for_status()
+    return response.json()
 
 def display_message(message: dict):
     """Display a saved message, including answer sources."""
@@ -150,6 +166,40 @@ except requests.RequestException:
 
 
 st.sidebar.divider()
+
+st.sidebar.subheader("Upload a Document")
+
+with st.sidebar.form("document_upload_form", clear_on_submit=True):
+    uploaded_file = st.file_uploader(
+        "Choose a PDF or TXT file",
+        type=["pdf", "txt"],
+        help="Maximum file size: 10 MB.",
+    )
+
+    upload_submitted = st.form_submit_button(
+        "Upload and Index",
+        use_container_width=True,
+    )
+
+if upload_submitted:
+    if uploaded_file is None:
+        st.sidebar.warning("Please select a PDF or TXT file first.")
+    else:
+        try:
+            with st.spinner("Uploading and indexing document..."):
+                result = upload_document(uploaded_file)
+
+            st.sidebar.success(result["message"])
+            st.sidebar.write(
+                f"Chunks indexed: {result['total_chunks']}"
+            )
+
+        except requests.HTTPError as exc:
+            detail = exc.response.text if exc.response is not None else str(exc)
+            st.sidebar.error(f"Upload failed: {detail}")
+
+        except requests.RequestException as exc:
+            st.sidebar.error(f"Could not reach the backend: {exc}")
 
 if st.sidebar.button("📚 Ingest Documents", use_container_width=True):
     try:
