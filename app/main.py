@@ -49,6 +49,8 @@ class QuestionResponse(BaseModel):
     sources: list[str]
     retrieval_attempts: int
     evidence_relevant: bool
+    grounded: bool | None = None
+    verification_error: str | None = None
 
 
 class IngestResponse(BaseModel):
@@ -196,7 +198,10 @@ def ask_question(request: QuestionRequest):
             sources=sources,
             retrieval_attempts=result["attempts"],
             evidence_relevant=result["relevant"],
+            grounded=result.get("grounded"),
+            verification_error=result.get("verification_error"),
         )
+
 
     except Exception as exc:
         raise HTTPException(

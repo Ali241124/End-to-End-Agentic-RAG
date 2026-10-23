@@ -5,7 +5,10 @@ from langgraph.graph import StateGraph, START, END
 
 from app.config import MAX_RETRIEVAL_ATTEMPTS, TOP_K
 from app.agent.state import AgentState
-from app.agent.evaluator import evaluate_relevance
+from app.agent.evaluator import (
+    evaluate_relevance,
+    evaluate_answer_grounding,
+)
 from app.rag.retriever import retrieve_documents
 from app.rag.generator import generate_answer
 from app.agent.query_contextualizer import contextualize_question
@@ -58,7 +61,6 @@ def rewrite_query_node(state: AgentState) -> dict:
 
     return {"search_query": rewritten_query}
 
-
 def generate_node(state: AgentState) -> dict:
     """Generate an answer using retrieved evidence and conversation history."""
 
@@ -71,6 +73,47 @@ def generate_node(state: AgentState) -> dict:
     print("[Agent] Answer generated")
 
     return {"answer": answer}
+
+def verify_answer_node(state: AgentState) -> dict:
+    """Verify the generated answer against retrieved evidence."""
+
+    try:
+        grounded = evaluate_answer_grounding(
+            question=state["question"],
+            answer=state["answer"],
+            documents=state["documents"],
+        )
+
+        print(f"[Agent] Answer grounded: {grounded}")
+
+        if not grounded:
+            return {
+                "grounded": False,
+                "verification_error": None,
+                "answer": (
+                    "I couldn't verify that this answer is fully "
+                    "supported by the retrieved documents. Please "
+                    "consult the source documents or rephrase your "
+                    "question."
+                ),
+            }
+
+        return {
+            "grounded": True,
+            "verification_error": None,
+        }
+
+    except Exception as exc:
+        print(f"[Agent] Grounding verification failed: {exc}")
+
+        return {
+            "grounded": False,
+            "verification_error": str(exc),
+            "answer": (
+                "I couldn't verify the answer because the verification "
+                "service encountered an error. Please try again."
+            ),
+        }
 
 def no_evidence_node(state: AgentState) -> dict:
     """Respond safely when retrieval finds no relevant evidence."""
@@ -123,7 +166,9 @@ def build_agent():
     )
 
     workflow.add_edge("rewrite", "retrieve")
-    workflow.add_edge("generate", END)
+    workflow.add_edge("generate", "verify")
+    workflow.add_node("verify", verify_answer_node)
+    workflow.add_edge("verify", END)
     workflow.add_edge("no_evidence", END)
 
     return workflow.compile()
@@ -163,6 +208,8 @@ def ask_agent(
         "attempts": 0,
         "relevant": False,
         "answer": "",
+        "grounded": None,
+        "verification_error": None,
     }
 
     return agent.invoke(initial_state)

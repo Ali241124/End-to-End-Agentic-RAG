@@ -102,7 +102,6 @@ def fetch_documents() -> dict:
     return response.json()
 
 def display_message(message: dict):
-    """Display a saved message, including answer sources."""
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
@@ -115,10 +114,15 @@ def display_message(message: dict):
                         st.write(f"- {source}")
 
             attempts = message.get("retrieval_attempts")
-
             if attempts is not None:
                 st.caption(f"Retrieval attempts: {attempts}")
 
+            grounded = message.get("grounded")
+
+            if grounded is True:
+                st.success("Answer verified against retrieved evidence")
+            elif grounded is False:
+                st.warning("Answer could not be verified against retrieved evidence")
 
 # --------------------------------
 # Session state initialization

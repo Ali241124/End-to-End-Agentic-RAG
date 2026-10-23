@@ -84,11 +84,30 @@ def search_chunks(
             }
         )
 
-    return [
+        # Debug: inspect raw retrieval distances before filtering.
+    print(
+        "[VectorStore] Distances:",
+        [round(match["distance"], 3) for match in matches],
+    )
+    print(
+        f"[VectorStore] Distance threshold: {SIMILARITY_THRESHOLD}"
+    )
+
+    # Keep only chunks within the configured distance threshold.
+    filtered_matches = [
         match
         for match in matches
         if match["distance"] <= SIMILARITY_THRESHOLD
     ]
+
+    print(
+        f"[VectorStore] Matches before filtering: {len(matches)}"
+    )
+    print(
+        f"[VectorStore] Matches after filtering: {len(filtered_matches)}"
+    )
+
+    return filtered_matches
 
 
 def list_indexed_documents() -> list[dict]:

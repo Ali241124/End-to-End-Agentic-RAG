@@ -10,3 +10,5 @@ class AgentState(TypedDict):
     attempts: int
     relevant: bool
     answer: str
+    grounded: bool | None
+    verification_error: str | None
