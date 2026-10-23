@@ -85,3 +85,42 @@ def search_chunks(
         )
 
     return matches
+
+
+def list_indexed_documents() -> list[dict]:
+    """Return unique document sources and their indexed chunk counts."""
+
+    total = collection.count()
+
+    if total == 0:
+        return []
+
+    result = collection.get(
+        include=["metadatas"],
+        limit=total,
+    )
+
+    chunk_counts: dict[str, int] = {}
+
+    for metadata in result.get("metadatas") or []:
+        if not metadata:
+            continue
+
+        source = metadata.get("source")
+
+        if source:
+            chunk_counts[source] = chunk_counts.get(source, 0) + 1
+
+    return [
+        {"filename": filename, "chunks": count}
+        for filename, count in sorted(chunk_counts.items())
+    ]
+
+
+def delete_document_chunks(source: str) -> None:
+    """Delete all indexed chunks belonging to one source filename."""
+
+    if not source.strip():
+        raise ValueError("Source filename cannot be empty.")
+
+    collection.delete(where={"source": source})

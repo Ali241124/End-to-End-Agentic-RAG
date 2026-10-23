@@ -81,6 +81,27 @@ def upload_document(uploaded_file) -> dict:
     response.raise_for_status()
     return response.json()
 
+def delete_document(filename: str) -> dict:
+    """Delete a document through the FastAPI backend."""
+
+    response = requests.delete(
+        f"{API_URL}/documents",
+        params={"filename": filename},
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+def fetch_documents() -> dict:
+    """Fetch available documents and their indexing status."""
+
+    response = requests.get(
+        f"{API_URL}/documents",
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
 def display_message(message: dict):
     """Display a saved message, including answer sources."""
     with st.chat_message(message["role"]):
@@ -220,8 +241,73 @@ if st.sidebar.button("📚 Ingest Documents", use_container_width=True):
         st.sidebar.error(f"Ingestion failed: {exc}")
 
 
-st.sidebar.caption("Powered by LangGraph, FastAPI, ChromaDB and Ollama")
+st.sidebar.divider()
+st.sidebar.subheader("Knowledge Base")
 
+try:
+    document_data = fetch_documents()
+    documents = document_data.get("documents", [])
+
+    if not documents:
+        st.sidebar.info("No documents uploaded yet.")
+    else:
+        st.sidebar.caption(
+            f"{document_data['total_documents']} document(s) available"
+        )
+
+        for document in documents:
+            with st.sidebar.expander(document["filename"]):
+                if document["indexed"]:
+                    st.success("Indexed")
+                else:
+                    st.warning("Not indexed")
+
+                st.caption(f"Chunks: {document['chunks']}")
+                st.caption(
+                    f"Size: {document['size_bytes'] / 1024:.1f} KB"
+                )
+
+                confirm_key = (
+                    f"confirm_delete_{document['filename']}"
+                )
+
+                confirmed = st.checkbox(
+                    "Confirm deletion",
+                    key=confirm_key,
+                )
+
+                if st.button(
+                    "Delete document",
+                    key=f"delete_{document['filename']}",
+                    disabled=not confirmed,
+                    use_container_width=True,
+                ):
+                    try:
+                        result = delete_document(document["filename"])
+                        st.sidebar.success(result["message"])
+                        st.rerun()
+
+                    except requests.HTTPError as exc:
+                        detail = (
+                            exc.response.text
+                            if exc.response is not None
+                            else str(exc)
+                        )
+                        st.sidebar.error(
+                            f"Deletion failed: {detail}"
+                        )
+
+                    except requests.RequestException as exc:
+                        st.sidebar.error(
+                            f"Could not reach the backend: {exc}"
+                        )
+
+except requests.RequestException:
+    st.sidebar.warning("Could not load the document list.")
+
+st.sidebar.caption(
+    "Powered by LangGraph, FastAPI, ChromaDB and Ollama"
+)
 
 # --------------------------------
 # Ensure an active conversation

@@ -7,6 +7,10 @@ from app.rag.retriever import ingest_documents
 from pathlib import Path
 from app.config import DOCUMENTS_DIR
 from app.rag.retriever import ingest_single_document
+from app.rag.vector_store import (
+    list_indexed_documents,
+    delete_document_chunks,
+)
 from app.database.chat_history import (
     create_conversation,
     list_conversations,
@@ -304,3 +308,89 @@ async def upload_document(file: UploadFile = File(...)):
             status_code=500,
             detail=f"Could not process '{safe_name}': {exc}",
         ) from exc
+
+
+@app.get("/documents")
+def get_documents():
+    """List supported document files and their indexing status."""
+
+    DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    indexed_documents = {
+        document["filename"]: document["chunks"]
+        for document in list_indexed_documents()
+    }
+
+    documents = []
+
+    for file_path in sorted(DOCUMENTS_DIR.iterdir()):
+        if not file_path.is_file():
+            continue
+
+        if file_path.suffix.lower() not in {".pdf", ".txt"}:
+            continue
+
+        chunk_count = indexed_documents.get(file_path.name, 0)
+
+        documents.append(
+            {
+                "filename": file_path.name,
+                "indexed": chunk_count > 0,
+                "chunks": chunk_count,
+                "size_bytes": file_path.stat().st_size,
+            }
+        )
+
+    return {
+        "total_documents": len(documents),
+        "documents": documents,
+    }
+
+
+@app.delete("/documents")
+def delete_document(filename: str):
+    """Delete one document and its indexed chunks."""
+
+    safe_name = Path(filename).name
+
+    if safe_name != filename or safe_name in {"", ".", ".."}:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid document filename.",
+        )
+
+    if Path(safe_name).suffix.lower() not in {".pdf", ".txt"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF and TXT documents can be deleted.",
+        )
+
+    file_path = DOCUMENTS_DIR / safe_name
+
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document '{safe_name}' was not found.",
+        )
+
+    try:
+        # Remove indexed chunks first so deleted documents
+        # cannot continue appearing in retrieval results.
+        delete_document_chunks(safe_name)
+
+        file_path.unlink()
+
+        return {
+            "message": f"'{safe_name}' was deleted successfully.",
+            "filename": safe_name,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not delete '{safe_name}': {exc}",
+        ) from exc
+
